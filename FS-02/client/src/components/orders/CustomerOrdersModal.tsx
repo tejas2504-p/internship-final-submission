@@ -1,0 +1,704 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  X,
+  Package,
+  Truck,
+  AlertCircle,
+  ChevronRight,
+  Loader2,
+  Store,
+  Layers,
+  CreditCard,
+  CheckCircle2,
+  FileText,
+  Banknote,
+  Sparkles,
+  QrCode,
+} from 'lucide-react';
+import { Order, VendorOrder, PaymentMethodType } from '../../types';
+import { orderApi } from '../../services/order.api';
+import { paymentApi } from '../../services/payment.api';
+import { invoiceApi } from '../../services/invoice.api';
+import { loadRazorpayScript } from '../../utils/loadRazorpay';
+import { PaymentMethodSelector } from '../checkout/PaymentMethodSelector';
+import { UpiQrPaymentModal } from '../checkout/UpiQrPaymentModal';
+
+interface CustomerOrdersModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+export const CustomerOrdersModal: React.FC<CustomerOrdersModalProps> = ({ isOpen, onClose }) => {
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [vendorOrders, setVendorOrders] = useState<VendorOrder[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isLoadingDetails, setIsLoadingDetails] = useState<boolean>(false);
+  const [isProcessingPayment, setIsProcessingPayment] = useState<boolean>(false);
+  const [downloadingOrderId, setDownloadingOrderId] = useState<string | null>(null);
+  const [invoiceError, setInvoiceError] = useState<string | null>(null);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
+  const [paymentSuccess, setPaymentSuccess] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Payment Method Selection & Test Gateway Simulator State
+  const [selectedPayMethod, setSelectedPayMethod] = useState<PaymentMethodType>('upi_qr');
+  const [showSimulatorModal, setShowSimulatorModal] = useState<boolean>(false);
+  const [showUpiQrModal, setShowUpiQrModal] = useState<boolean>(false);
+  const [testOrderData, setTestOrderData] = useState<any>(null);
+
+  const loadOrders = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      setError(null);
+      const data = await orderApi.getCustomerOrders();
+      setOrders(data);
+    } catch (err: any) {
+      setError(err?.response?.data?.error?.message || 'Failed to load orders');
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isOpen) {
+      loadOrders();
+      setSelectedOrder(null);
+      setVendorOrders([]);
+      setShowSimulatorModal(false);
+      setTestOrderData(null);
+    }
+  }, [isOpen, loadOrders]);
+
+  const handleSelectOrder = async (order: Order) => {
+    setSelectedOrder(order);
+    setPaymentError(null);
+    setPaymentSuccess(false);
+    if (order.paymentMethod && order.paymentMethod !== 'cod') {
+      setSelectedPayMethod(order.paymentMethod as PaymentMethodType);
+    } else {
+      setSelectedPayMethod('upi');
+    }
+    try {
+      setIsLoadingDetails(true);
+      const vo = await orderApi.getCustomerVendorOrders(order.id);
+      setVendorOrders(vo);
+    } catch (err: any) {
+      console.error('Failed to load child vendor orders', err);
+    } finally {
+      setIsLoadingDetails(false);
+    }
+  };
+
+  const handlePayOrder = async (order: Order, overrideMethod?: PaymentMethodType) => {
+    const methodToUse = overrideMethod || selectedPayMethod || 'upi_qr';
+
+    if (methodToUse === 'upi_qr') {
+      setShowUpiQrModal(true);
+      return;
+    }
+
+    try {
+      setIsProcessingPayment(true);
+      setPaymentError(null);
+
+      // 1. Create Razorpay order on backend (/api/payments/create-order)
+      const rzpOrderData = await paymentApi.createOrder(order.id, methodToUse);
+
+      // 2. Check if running in development/test with placeholder key
+      if (rzpOrderData.keyId.includes('placeholder')) {
+        setTestOrderData(rzpOrderData);
+        setShowSimulatorModal(true);
+        setIsProcessingPayment(false);
+        return;
+      }
+
+      const isLoaded = await loadRazorpayScript();
+      if (!isLoaded) {
+        throw new Error('Razorpay SDK failed to load. Please verify your connection.');
+      }
+
+      const razorpayMethodKey =
+        methodToUse === 'card'
+          ? 'card'
+          : methodToUse === 'netbanking'
+          ? 'netbanking'
+          : methodToUse === 'wallet'
+          ? 'wallet'
+          : 'upi';
+
+      const options = {
+        key: rzpOrderData.keyId,
+        amount: rzpOrderData.amount,
+        currency: rzpOrderData.currency,
+        name: 'NexusMarket Multi-Vendor',
+        description: `Payment for Order #${order.orderNumber} via ${methodToUse.toUpperCase()}`,
+        order_id: rzpOrderData.razorpayOrderId,
+        prefill: {
+          name: rzpOrderData.customer.name,
+          contact: rzpOrderData.customer.phone,
+          method: razorpayMethodKey,
+        },
+        theme: {
+          color: '#10B981', // light green emerald
+        },
+        handler: async (response: any) => {
+          try {
+            setIsProcessingPayment(true);
+            const verifyResult = await paymentApi.verifyPayment({
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature,
+              paymentMethod: methodToUse,
+            });
+
+            setSelectedOrder(verifyResult.order);
+            setPaymentSuccess(true);
+            loadOrders();
+          } catch (err: any) {
+            setPaymentError(err?.response?.data?.error?.message || 'Payment verification failed');
+          } finally {
+            setIsProcessingPayment(false);
+          }
+        },
+        modal: {
+          ondismiss: () => {
+            setIsProcessingPayment(false);
+            setPaymentError('Payment window was closed. You can retry paying anytime.');
+          },
+        },
+      };
+
+      const rzp = new (window as any).Razorpay(options);
+      rzp.on('payment.failed', (resp: any) => {
+        setPaymentError(resp.error?.description || 'Payment was unsuccessful');
+        setIsProcessingPayment(false);
+      });
+      rzp.open();
+    } catch (err: any) {
+      setPaymentError(err?.response?.data?.error?.message || err.message || 'Payment initiation failed');
+      setIsProcessingPayment(false);
+    }
+  };
+
+  const handleSimulatePayment = async (status: 'success' | 'failed' | 'cancel') => {
+    if (!testOrderData || !selectedOrder) return;
+    try {
+      setIsProcessingPayment(true);
+      setShowSimulatorModal(false);
+
+      if (status === 'cancel') {
+        setPaymentError('Payment window was closed. You can retry paying anytime.');
+        setIsProcessingPayment(false);
+        return;
+      }
+
+      if (status === 'failed') {
+        setPaymentError('Simulated payment failed: Card declined / UPI transaction failed at issuing bank.');
+        setIsProcessingPayment(false);
+        return;
+      }
+
+      // Success simulation: submit to backend verification
+      const simPaymentId = `pay_sim_${Date.now()}`;
+      const simSignature = `sim_sig_${Date.now()}`;
+
+      const verifyResult = await paymentApi.verifyPayment({
+        razorpay_order_id: testOrderData.razorpayOrderId,
+        razorpay_payment_id: simPaymentId,
+        razorpay_signature: simSignature,
+        paymentMethod: selectedPayMethod,
+      });
+
+      setSelectedOrder(verifyResult.order);
+      setPaymentSuccess(true);
+      loadOrders();
+    } catch (err: any) {
+      setPaymentError(err?.response?.data?.error?.message || 'Payment verification failed');
+    } finally {
+      setIsProcessingPayment(false);
+    }
+  };
+
+  const handleDownloadInvoice = async (orderId: string, orderNumber: string) => {
+    try {
+      setDownloadingOrderId(orderId);
+      setInvoiceError(null);
+      const invoice = await invoiceApi.getOrderInvoice(orderId);
+      await invoiceApi.downloadInvoicePdf(invoice._id, `Invoice-${orderNumber}.pdf`);
+    } catch (err: any) {
+      setInvoiceError(err?.response?.data?.error?.message || 'Failed to download invoice document');
+    } finally {
+      setDownloadingOrderId(null);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case 'delivered':
+        return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+      case 'shipped':
+        return 'bg-blue-50 text-blue-700 border-blue-200';
+      case 'partially_delivered':
+        return 'bg-teal-50 text-teal-700 border-teal-200';
+      case 'partially_shipped':
+        return 'bg-sky-50 text-sky-700 border-sky-200';
+      case 'processing':
+        return 'bg-amber-50 text-amber-700 border-amber-200';
+      case 'confirmed':
+        return 'bg-indigo-50 text-indigo-700 border-indigo-200';
+      case 'cancelled':
+        return 'bg-rose-50 text-rose-700 border-rose-200';
+      default:
+        return 'bg-slate-100 text-slate-700 border-slate-200';
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-white rounded-3xl max-w-2xl w-full shadow-2xl border border-slate-100 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+        {/* Header */}
+        <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+          <div className="flex items-center space-x-2.5">
+            <div className="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center">
+              <Package className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-slate-900">
+                {selectedOrder ? `Order #${selectedOrder.orderNumber}` : 'Your Order History'}
+              </h2>
+              <p className="text-xs text-slate-500">
+                {selectedOrder ? 'Multi-Vendor shipment tracking' : 'Track and manage your marketplace purchases'}
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Error notification */}
+        {error && (
+          <div className="mx-6 mt-4 p-3.5 bg-rose-50 border border-rose-200 rounded-2xl flex items-start space-x-2.5 text-rose-700 text-xs">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        {/* Body */}
+        <div className="p-6 max-h-[75vh] overflow-y-auto">
+          {selectedOrder ? (
+            /* Detailed Order View with Vendor Splitting */
+            <div className="space-y-6">
+              <button
+                onClick={() => setSelectedOrder(null)}
+                className="text-xs font-bold text-indigo-600 hover:text-indigo-700 flex items-center space-x-1"
+              >
+                <span>← Back to all orders</span>
+              </button>
+
+              {/* Order Meta & Status */}
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-3">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                      Order Reference
+                    </span>
+                    <span className="text-base font-black text-slate-900">
+                      {selectedOrder.orderNumber}
+                    </span>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Placed on {new Date(selectedOrder.createdAt).toLocaleDateString()}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <span
+                      className={`inline-block px-2.5 py-1 text-xs font-bold rounded-lg border capitalize ${getStatusBadge(
+                        selectedOrder.orderStatus
+                      )}`}
+                    >
+                      {selectedOrder.orderStatus.replace('_', ' ')}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="pt-3 border-t border-slate-200 text-xs grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <span className="font-bold text-slate-700 block mb-0.5">Delivery Destination:</span>
+                    <p className="text-slate-600">{selectedOrder.deliveryAddress.fullName}</p>
+                    <p className="text-slate-600">{selectedOrder.deliveryAddress.addressLine1}</p>
+                    <p className="text-slate-600">
+                      {selectedOrder.deliveryAddress.city}, {selectedOrder.deliveryAddress.state}{' '}
+                      {selectedOrder.deliveryAddress.postalCode}
+                    </p>
+                  </div>
+                  <div>
+                    <span className="font-bold text-slate-700 block mb-0.5">Payment Summary:</span>
+                    <p className="text-slate-600">Subtotal: ${selectedOrder.subtotal.toFixed(2)}</p>
+                    <p className="text-slate-600">
+                      Shipping: {selectedOrder.shippingAmount === 0 ? 'FREE' : `$${selectedOrder.shippingAmount.toFixed(2)}`}
+                    </p>
+                    <p className="text-slate-600">
+                      Method:{' '}
+                      <span className="font-semibold text-slate-800 uppercase">
+                        {selectedOrder.paymentMethod === 'cod'
+                          ? 'Cash on Delivery (COD)'
+                          : selectedOrder.paymentMethod
+                          ? selectedOrder.paymentMethod
+                          : 'Online'}
+                      </span>
+                    </p>
+                    <div className="flex items-center space-x-2 mt-1">
+                      <span className="text-sm font-black text-slate-900">
+                        Total: ${selectedOrder.totalAmount.toFixed(2)}
+                      </span>
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full capitalize ${
+                          selectedOrder.paymentStatus === 'paid'
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : selectedOrder.paymentMethod === 'cod'
+                            ? 'bg-teal-100 text-teal-800'
+                            : 'bg-amber-100 text-amber-800'
+                        }`}
+                      >
+                        {selectedOrder.paymentStatus === 'paid'
+                          ? 'Paid (Captured)'
+                          : selectedOrder.paymentMethod === 'cod'
+                          ? 'COD (Pending on Delivery)'
+                          : selectedOrder.paymentStatus}
+                      </span>
+                    </div>
+
+                    {selectedOrder.paymentMethod === 'cod' && (
+                      <div className="mt-2.5 p-2.5 bg-teal-50 border border-teal-200 rounded-xl text-[11px] text-teal-800 flex items-start space-x-1.5">
+                        <Banknote className="w-4 h-4 text-teal-600 shrink-0 mt-0.5" />
+                        <span>Pay ${selectedOrder.totalAmount.toFixed(2)} in cash or UPI upon delivery.</span>
+                      </div>
+                    )}
+
+                    {selectedOrder.paymentStatus !== 'paid' && selectedOrder.paymentMethod !== 'cod' && selectedOrder.orderStatus !== 'cancelled' && (
+                      <div className="mt-3 space-y-2">
+                        <span className="font-bold text-[11px] text-slate-700 block">Choose Payment Option:</span>
+                        <PaymentMethodSelector
+                          selectedMethod={selectedPayMethod}
+                          onSelectMethod={setSelectedPayMethod}
+                          allowCod={false}
+                          compact={true}
+                        />
+
+                        <button
+                          onClick={() => handlePayOrder(selectedOrder, selectedPayMethod)}
+                          disabled={isProcessingPayment}
+                          className="w-full mt-2 px-3 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold shadow-sm flex items-center justify-center space-x-1.5 transition disabled:opacity-50"
+                        >
+                          {isProcessingPayment ? (
+                            <>
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              <span>Connecting to Gateway...</span>
+                            </>
+                          ) : (
+                            <>
+                              <CreditCard className="w-3.5 h-3.5" />
+                              <span>Pay via {selectedPayMethod.toUpperCase()} with Razorpay</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Download Invoice Action */}
+                    <button
+                      onClick={() => handleDownloadInvoice(selectedOrder.id, selectedOrder.orderNumber)}
+                      disabled={downloadingOrderId === selectedOrder.id}
+                      className="mt-2.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-bold shadow-sm flex items-center space-x-1.5 transition disabled:opacity-50"
+                    >
+                      {downloadingOrderId === selectedOrder.id ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <span>Preparing PDF...</span>
+                        </>
+                      ) : (
+                        <>
+                          <FileText className="w-3.5 h-3.5" />
+                          <span>Download Tax Invoice</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {invoiceError && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 flex items-center space-x-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>{invoiceError}</span>
+                  </div>
+                )}
+
+                {paymentError && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 flex items-center space-x-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>{paymentError}</span>
+                  </div>
+                )}
+
+                {paymentSuccess && (
+                  <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-700 font-semibold flex items-center space-x-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>Payment verified and captured successfully via Razorpay!</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Vendor Shipments Breakdown */}
+              <div className="space-y-3">
+                <div className="flex items-center space-x-2">
+                  <Layers className="w-4 h-4 text-indigo-600" />
+                  <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                    Vendor Shipments ({vendorOrders.length})
+                  </h3>
+                </div>
+
+                {isLoadingDetails ? (
+                  <div className="py-8 flex items-center justify-center text-slate-400 space-x-2">
+                    <Loader2 className="w-5 h-5 animate-spin text-indigo-600" />
+                    <span className="text-xs">Loading shipment packages...</span>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {vendorOrders.map((vo) => (
+                      <div
+                        key={vo.id}
+                        className="rounded-2xl border border-slate-200 p-4 space-y-3 bg-white hover:border-slate-300 transition shadow-sm"
+                      >
+                        {/* Package Header */}
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-2">
+                            <Store className="w-4 h-4 text-slate-500" />
+                            <span className="text-xs font-bold text-slate-900">
+                              Package #{vo.vendorOrderNumber}
+                            </span>
+                          </div>
+                          <span
+                            className={`px-2 py-0.5 text-[10px] font-bold rounded-md border capitalize ${getStatusBadge(
+                              vo.orderStatus
+                            )}`}
+                          >
+                            {vo.orderStatus}
+                          </span>
+                        </div>
+
+                        {/* Tracking details */}
+                        {vo.shipmentTracking?.trackingNumber && (
+                          <div className="p-2.5 bg-blue-50/50 rounded-xl border border-blue-100 flex items-center justify-between text-xs">
+                            <div className="flex items-center space-x-2">
+                              <Truck className="w-4 h-4 text-blue-600" />
+                              <span className="text-slate-700">
+                                <strong>Carrier:</strong> {vo.shipmentTracking.carrier || 'Standard'}
+                              </span>
+                            </div>
+                            <span className="font-mono text-blue-700 font-bold">
+                              {vo.shipmentTracking.trackingNumber}
+                            </span>
+                          </div>
+                        )}
+
+                        {/* Items */}
+                        <div className="space-y-2 pt-2 border-t border-slate-100">
+                          {vo.items.map((it, idx) => (
+                            <div key={idx} className="flex justify-between text-xs text-slate-700">
+                              <span>
+                                {it.productName} × {it.quantity}
+                              </span>
+                              <span className="font-semibold">${it.itemSubtotal.toFixed(2)}</span>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="pt-2 border-t border-slate-100 flex justify-between items-center text-xs text-slate-600">
+                          <span>Vendor Package Subtotal:</span>
+                          <span className="font-bold text-slate-900">${vo.vendorSubtotal.toFixed(2)}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            /* Orders Listing */
+            <div className="space-y-3">
+              {isLoading ? (
+                <div className="py-16 flex flex-col items-center justify-center text-slate-400 space-y-2">
+                  <Loader2 className="w-7 h-7 animate-spin text-indigo-600" />
+                  <span className="text-xs">Loading orders...</span>
+                </div>
+              ) : orders.length === 0 ? (
+                <div className="py-16 text-center space-y-3">
+                  <Package className="w-12 h-12 text-slate-300 mx-auto" />
+                  <h3 className="text-sm font-bold text-slate-900">No orders placed yet</h3>
+                  <p className="text-xs text-slate-500">
+                    Explore products in the catalog and check out to view your orders here.
+                  </p>
+                </div>
+              ) : (
+                orders.map((ord) => (
+                  <div
+                    key={ord.id}
+                    onClick={() => handleSelectOrder(ord)}
+                    className="cursor-pointer rounded-2xl border border-slate-200 p-4 hover:border-indigo-400 hover:shadow-md transition bg-white flex items-center justify-between"
+                  >
+                    <div className="space-y-1">
+                      <div className="flex items-center space-x-2">
+                        <span className="text-sm font-bold text-slate-900">#{ord.orderNumber}</span>
+                        <span
+                          className={`px-2 py-0.5 text-[10px] font-bold rounded-md border capitalize ${getStatusBadge(
+                            ord.orderStatus
+                          )}`}
+                        >
+                          {ord.orderStatus.replace('_', ' ')}
+                        </span>
+                        <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-slate-100 text-slate-600 uppercase">
+                          {ord.paymentMethod === 'cod' ? 'COD' : ord.paymentMethod || 'Online'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500">
+                        {new Date(ord.createdAt).toLocaleDateString()} • {ord.items.length}{' '}
+                        {ord.items.length === 1 ? 'item' : 'items'}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center space-x-3">
+                      <span className="text-sm font-black text-slate-900">${ord.totalAmount.toFixed(2)}</span>
+                      <ChevronRight className="w-4 h-4 text-slate-400" />
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Razorpay Test Mode Gateway Simulator Modal */}
+      {showSimulatorModal && testOrderData && (
+        <div className="fixed inset-0 z-[90] bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-white rounded-3xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-150">
+            <div className="px-6 py-4 bg-gradient-to-r from-emerald-600 to-teal-600 text-white flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Sparkles className="w-5 h-5 text-emerald-200" />
+                <div>
+                  <h3 className="text-sm font-bold">Razorpay Test Gateway Simulator</h3>
+                  <p className="text-[11px] text-emerald-100">Sandbox Environment Mode</p>
+                </div>
+              </div>
+              <button
+                onClick={() => handleSimulatePayment('cancel')}
+                className="p-1 rounded-full text-white/80 hover:text-white hover:bg-white/10"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 text-xs">
+              <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 space-y-2">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Order Number:</span>
+                  <span className="font-bold text-slate-800">{selectedOrder?.orderNumber}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Payment Method:</span>
+                  <span className="font-bold text-emerald-700 uppercase">{selectedPayMethod}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Razorpay Order ID:</span>
+                  <span className="font-mono text-slate-600 text-[11px]">{testOrderData.razorpayOrderId}</span>
+                </div>
+                <div className="flex justify-between border-t border-slate-200 pt-2 text-sm font-black text-slate-900">
+                  <span>Payable Amount:</span>
+                  <span className="text-emerald-700">₹{(testOrderData.amount / 100).toFixed(2)}</span>
+                </div>
+              </div>
+
+              <p className="text-[11px] text-slate-500 leading-relaxed">
+                This testing modal validates your HMAC payment signature verification, order status reconciliation, platform commissions, and automated tax invoices without real banking deductions.
+              </p>
+
+              <div className="space-y-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowSimulatorModal(false);
+                    setShowUpiQrModal(true);
+                  }}
+                  className="w-full py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl font-bold text-xs transition flex items-center justify-center space-x-2"
+                >
+                  <QrCode className="w-4 h-4 text-emerald-600" />
+                  <span>Pay using UPI QR Code Flow</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleSimulatePayment('success')}
+                  disabled={isProcessingPayment}
+                  className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-bold shadow-md shadow-emerald-500/20 transition flex items-center justify-center space-x-2 disabled:opacity-50"
+                >
+                  {isProcessingPayment ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span>Simulate Successful Payment</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleSimulatePayment('failed')}
+                  disabled={isProcessingPayment}
+                  className="w-full py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl font-semibold transition"
+                >
+                  Simulate Bank Decline / Network Failure
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleSimulatePayment('cancel')}
+                  disabled={isProcessingPayment}
+                  className="w-full py-2 text-slate-400 hover:text-slate-600 font-medium text-[11px]"
+                >
+                  Dismiss / Cancel Payment
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* UPI QR Payment Modal */}
+      {showUpiQrModal && selectedOrder && (
+        <UpiQrPaymentModal
+          isOpen={showUpiQrModal}
+          orderId={selectedOrder.id}
+          orderNumber={selectedOrder.orderNumber}
+          totalAmount={selectedOrder.totalAmount}
+          onClose={() => setShowUpiQrModal(false)}
+          onPaymentSuccess={(updatedOrder) => {
+            setShowUpiQrModal(false);
+            setSelectedOrder((prev) => (prev ? { ...prev, ...updatedOrder, paymentStatus: 'paid' } : updatedOrder));
+            setPaymentSuccess(true);
+            loadOrders();
+          }}
+          onPaymentFailed={(errMsg) => {
+            setPaymentError(errMsg);
+          }}
+        />
+      )}
+    </div>
+  );
+};

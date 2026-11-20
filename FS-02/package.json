@@ -1,0 +1,49 @@
+{
+  "name": "multi-vendor-marketplace",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Production-level Multi-Vendor E-Commerce Marketplace",
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev": "concurrently -n \"server,client\" -c \"blue,green\" \"npm run dev --workspace=server\" \"npm run dev --workspace=client\"",
+    "dev:server": "npm run dev --workspace=server",
+    "dev:client": "npm run dev --workspace=client",
+    "start:server": "npm run start --workspace=server",
+    "seed:demo": "npm run seed:demo --workspace=server",
+    "seed:dummyjson": "npm run seed:dummyjson --workspace=server",
+    "test:auth": "npm run test:auth --workspace=server",
+    "test:rbac": "npm run test:rbac --workspace=server",
+    "test:vendor": "npm run test:vendor --workspace=server",
+    "test:approval": "npm run test:approval --workspace=server",
+    "test:product": "npm run test:product --workspace=server",
+    "test:images": "npm run test:images --workspace=server",
+    "test:elastic": "npm run test:elastic --workspace=server",
+    "test:search": "npm run test:search --workspace=server",
+    "test:cart": "npm run test:cart --workspace=server",
+    "test:checkout": "npm run test:checkout --workspace=server",
+    "test:multivendor": "npm run test:multivendor --workspace=server",
+    "test:payment": "npm run test:payment --workspace=server",
+    "test:commission": "npm run test:commission --workspace=server",
+    "test:reviews": "npm run test:reviews --workspace=server",
+    "test:coupons": "npm run test:coupons --workspace=server",
+    "test:invoices": "npm run test:invoices --workspace=server",
+    "test:analytics": "npm run test:analytics --workspace=server",
+    "test:e2e": "npm run test:e2e --workspace=server",
+    "test": "npm run test --workspace=server",
+    "build:server": "npm run build --workspace=server",
+    "build:client": "npm run build --workspace=client",
+    "build": "npm run build:server && npm run build:client",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "dependencies": {
+    "@types/qrcode": "^1.5.6",
+    "qrcode": "^1.5.4"
+  }
+}

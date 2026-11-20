@@ -1,0 +1,302 @@
+// Prisma 7 Schema for SyncSpace Phase 2A
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  EDITOR
+  MEMBER
+  VIEWER
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  EXPIRED
+  CANCELLED
+}
+
+model User {
+  id           String    @id @default(cuid())
+  name         String
+  email        String    @unique
+  emailVerified Boolean  @default(false)
+  image        String?
+  passwordHash String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  // Better Auth Relationships
+  sessions Session[]
+  accounts Account[]
+
+  // Domain Relationships
+  ownedWorkspaces  Workspace[]           @relation("WorkspaceOwner")
+  workspaceMembers WorkspaceMember[]
+  createdPages     Page[]                @relation("PageCreator")
+  comments         Comment[]             @relation("CommentAuthor")
+  createdVersions  DocumentVersion[]     @relation("VersionCreator")
+  savedCanvases    Canvas[]              @relation("CanvasLastSavedBy")
+  createdSketchboards Sketchboard[]       @relation("SketchboardCreator")
+  savedSketchboards   Sketchboard[]       @relation("SketchboardLastSavedBy")
+  sentInvitations  WorkspaceInvitation[] @relation("InvitationInviter")
+  activities       WorkspaceActivity[]   @relation("ActivityActor")
+
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Verification {
+  id         String    @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime? @default(now())
+  updatedAt  DateTime? @updatedAt
+
+  @@index([identifier])
+  @@map("verifications")
+}
+
+model Workspace {
+  id          String   @id @default(cuid())
+  name        String
+  description String?  @db.Text
+  icon        String?
+  ownerId     String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relationships
+  owner       User                  @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members     WorkspaceMember[]
+  pages       Page[]
+  canvas      Canvas?
+  sketchboards Sketchboard[]
+  invitations WorkspaceInvitation[]
+  activities  WorkspaceActivity[]
+
+  @@index([ownerId])
+  @@map("workspaces")
+}
+
+model WorkspaceMember {
+  id          String        @id @default(cuid())
+  userId      String
+  workspaceId String
+  role        WorkspaceRole @default(MEMBER)
+  createdAt   DateTime      @default(now())
+
+  // Relationships
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+  @@index([workspaceId])
+  @@index([workspaceId, createdAt])
+  @@map("workspace_members")
+}
+
+model Page {
+  id          String   @id @default(cuid())
+  title       String   @default("Untitled")
+  content     String?  @db.Text
+  workspaceId String
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relationships
+  workspace   Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  creator     User              @relation("PageCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  comments    Comment[]
+  versions    DocumentVersion[]
+  yjsDocument YjsDocument?
+
+  @@index([workspaceId])
+  @@index([createdById])
+  @@index([workspaceId, updatedAt(sort: Desc)])
+  @@map("pages")
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  content   String   @db.Text
+  pageId    String
+  authorId  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relationships
+  page   Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  author User @relation("CommentAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([pageId])
+  @@index([authorId])
+  @@index([pageId, createdAt(sort: Asc)])
+  @@map("comments")
+}
+
+model DocumentVersion {
+  id          String   @id @default(cuid())
+  pageId      String
+  content     String   @db.Text
+  createdById String
+  createdAt   DateTime @default(now())
+
+  // Relationships
+  page    Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  creator User @relation("VersionCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([pageId])
+  @@index([createdById])
+  @@index([pageId, createdAt(sort: Desc)])
+  @@map("document_versions")
+}
+
+model YjsDocument {
+  id        String   @id @default(cuid())
+  pageId    String   @unique
+  snapshot  Bytes
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@index([pageId])
+  @@map("yjs_documents")
+}
+
+model Canvas {
+  id            String   @id @default(cuid())
+  workspaceId   String   @unique
+  name          String   @default("Spatial Canvas")
+  description   String?  @db.Text
+  nodes         Json     @default("[]")
+  viewport      Json?
+  yjsSnapshot   Bytes?
+  version       Int      @default(1)
+  lastSavedById String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relationships
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  lastSavedBy User?     @relation("CanvasLastSavedBy", fields: [lastSavedById], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@map("canvases")
+}
+
+model Sketchboard {
+  id            String   @id @default(cuid())
+  workspaceId   String
+  name          String   @default("Workspace Sketchboard")
+  description   String?  @db.Text
+  elements      Json     @default("[]")
+  viewport      Json?
+  gridMode      String   @default("dots")
+  canvasBg      String   @default("white")
+  yjsSnapshot   Bytes?
+  version       Int      @default(1)
+  createdById   String?
+  lastSavedById String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relationships
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  creator     User?     @relation("SketchboardCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  lastSavedBy User?     @relation("SketchboardLastSavedBy", fields: [lastSavedById], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([createdById])
+  @@index([workspaceId, updatedAt(sort: Desc)])
+  @@map("sketchboards")
+}
+
+model WorkspaceInvitation {
+  id          String           @id @default(cuid())
+  workspaceId String
+  email       String
+  role        WorkspaceRole    @default(MEMBER)
+  token       String           @unique @default(cuid())
+  status      InvitationStatus @default(PENDING)
+  inviterId   String
+  expiresAt   DateTime
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  inviter   User      @relation("InvitationInviter", fields: [inviterId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([email])
+  @@index([token])
+  @@index([workspaceId, status])
+  @@map("workspace_invitations")
+}
+
+model WorkspaceActivity {
+  id          String   @id @default(cuid())
+  workspaceId String
+  actorId     String
+  action      String
+  entityType  String
+  entityId    String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  actor     User      @relation("ActivityActor", fields: [actorId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([actorId])
+  @@index([createdAt])
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@map("workspace_activities")
+}
+
+

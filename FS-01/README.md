@@ -95,6 +95,7 @@ SyncSpace includes comprehensive internal engineering specifications, database s
 | **REST & Real-Time API** | [`docs/api.md`](docs/api.md) | All 25 REST endpoints, Better Auth sessions, RBAC permissions, request/response schemas, and WebSocket protocols |
 | **Testing & Verification** | [`docs/testing.md`](docs/testing.md) | Automated test execution reports, verification matrices, edge case coverage, and empirical performance benchmarks |
 | **Production Deployment** | [`docs/deployment.md`](docs/deployment.md) | Vercel frontend, Railway/Docker WebSocket cluster, Neon PostgreSQL, Upstash Redis, and operational runbook |
+| **Project Demo Recording** | [Google Drive Video](https://drive.google.com/file/d/1JNU8kEirZYHpnLJ0bLCUTKMjrdpT46jx/view?usp=sharing) | Video walkthrough demonstrating real-time collaborative editing, spatial canvas, and version history |
 
 ---
 

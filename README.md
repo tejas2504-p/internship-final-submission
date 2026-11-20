@@ -24,7 +24,8 @@ SyncSpace is a collaborative workspace application designed to help teams organi
 - Real-time collaboration: WebSockets and Yjs
 - Coordination: Redis (where configured)
 
-**Project Location:** `./FS-01/`
+**Project Location:** `./FS-01/`  
+**Project Recording:** [Watch Video Demonstration](https://drive.google.com/file/d/1JNU8kEirZYHpnLJ0bLCUTKMjrdpT46jx/view?usp=sharing)
 
 ### FS-02: Multi-Vendor E-Commerce Marketplace
 
@@ -48,7 +49,8 @@ A full-stack e-commerce platform that enables multiple vendors to manage their s
 - Search: Elasticsearch
 - Payments: Razorpay (if implemented)
 
-**Project Location:** `./FS-02/`
+**Project Location:** `./FS-02/`  
+**Project Recording:** [Watch Video Demonstration](https://drive.google.com/file/d/1mhoCZli1xydNNX8OuYQzsFvH2bMyvbAA/view?usp=sharing)
 
 ## Repository Structure
 
@@ -90,10 +92,10 @@ The `docs` folders contain project-specific documentation, including:
 - Testing reports
 - Screenshots and supporting materials
 
-## Live Demonstrations
+## Live Demonstrations & Project Recordings
 
-- **FS-01 – SyncSpace:** Add deployment URL when available.
-- **FS-02 – Multi-Vendor Marketplace:** Add deployment URL when available.
+- **FS-01 – SyncSpace:** [Watch Project Demo Recording (Google Drive)](https://drive.google.com/file/d/1JNU8kEirZYHpnLJ0bLCUTKMjrdpT46jx/view?usp=sharing)
+- **FS-02 – Multi-Vendor Marketplace:** [Watch Project Demo Recording (Google Drive)](https://drive.google.com/file/d/1mhoCZli1xydNNX8OuYQzsFvH2bMyvbAA/view?usp=sharing)
 
 ## Internship Submission
 

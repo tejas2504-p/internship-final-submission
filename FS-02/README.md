@@ -14,6 +14,7 @@ Comprehensive architecture, database schemas, and API documentation prepared for
 - 📊 **[Database ER Diagram](docs/database-er-diagram.md)** — Visual Entity-Relationship diagram in Mermaid with relational cardinalities and data integrity rules.
 - 🔌 **[REST API Reference Documentation](docs/api-documentation.md)** — Complete endpoint catalog for Authentication, Products, Search, Cart, Orders, Payments, Reviews, Coupons, and Admin Analytics.
 - 📝 **[Individual Intern Reflection](docs/individual-intern-reflection.md)** — Individual internship reflections covering roles, modules implemented, technical hurdles, problem-solving, and skills gained for each team member.
+- 🎥 **[Project Demo Recording](https://drive.google.com/file/d/1mhoCZli1xydNNX8OuYQzsFvH2bMyvbAA/view?usp=sharing)** — Video demonstration walkthrough of the Multi-Vendor E-Commerce platform.
 
 ---
 
